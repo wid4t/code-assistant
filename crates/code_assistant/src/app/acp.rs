@@ -20,8 +20,8 @@ pub async fn run(verbose: bool, config: AgentRunConfig) -> Result<()> {
     let log_path = if cfg!(unix) {
         "/tmp/code-assistant-acp.log".to_string()
     } else {
-        let program_data = std::env::var("ProgramData")
-            .unwrap_or_else(|_| "C:\\ProgramData".to_string());
+        let program_data =
+            std::env::var("ProgramData").unwrap_or_else(|_| "C:\\ProgramData".to_string());
         format!("{program_data}\\code-assistant\\code-assistant-acp.log")
     };
 

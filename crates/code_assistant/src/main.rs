@@ -4,6 +4,7 @@ mod app;
 mod cli;
 mod codex_commands;
 mod config;
+mod kiro_commands;
 mod logging;
 mod mcp;
 mod permissions;
@@ -40,6 +41,10 @@ async fn main() -> Result<()> {
         }
         Some(Mode::CodexStatus) => {
             return codex_commands::run_codex_status();
+        }
+        Some(Mode::KiroLogin) => {
+            setup_logging(1, true);
+            return kiro_commands::run_kiro_login().await;
         }
         Some(Mode::Server { verbose }) => app::server::run(verbose).await,
         Some(Mode::Acp {

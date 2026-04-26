@@ -200,7 +200,7 @@ async fn create_openai_client(
 // Provider Types and Configuration
 // ============================================================================
 
-#[derive(ValueEnum, Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(ValueEnum, Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum LLMProviderType {
     AiCore,
     Anthropic,
@@ -216,6 +216,28 @@ pub enum LLMProviderType {
     OpenAIResponsesWs,
     OpenRouter,
     Vertex,
+}
+
+fn parse_provider_type(provider: &str) -> Result<LLMProviderType> {
+    let provider_type = match provider {
+        "ai-core" => LLMProviderType::AiCore,
+        "anthropic" => LLMProviderType::Anthropic,
+        "cerebras" => LLMProviderType::Cerebras,
+        "groq" => LLMProviderType::Groq,
+        "minimax" => LLMProviderType::Minimax,
+        "mistral-ai" => LLMProviderType::MistralAI,
+        "moonshot" => LLMProviderType::Moonshot,
+        "z-ai" => LLMProviderType::Zai,
+        "ollama" => LLMProviderType::Ollama,
+        "openai" => LLMProviderType::OpenAI,
+        "openai-responses" => LLMProviderType::OpenAIResponses,
+        "openai-responses-ws" | "openai-compatible" | "kiro" => LLMProviderType::OpenAIResponsesWs,
+        "openrouter" => LLMProviderType::OpenRouter,
+        "vertex" => LLMProviderType::Vertex,
+        _ => return Err(anyhow::anyhow!("Unknown provider type: {}", provider)),
+    };
+
+    Ok(provider_type)
 }
 
 /// Configuration for creating an LLM client
@@ -271,29 +293,7 @@ pub async fn create_llm_client_from_configs(
     };
 
     // Parse provider type
-    let provider_type = match provider_config.provider.as_str() {
-        "ai-core" => LLMProviderType::AiCore,
-        "anthropic" => LLMProviderType::Anthropic,
-        "cerebras" => LLMProviderType::Cerebras,
-        "groq" => LLMProviderType::Groq,
-        "minimax" => LLMProviderType::Minimax,
-        "mistral-ai" => LLMProviderType::MistralAI,
-        "moonshot" => LLMProviderType::Moonshot,
-        "z-ai" => LLMProviderType::Zai,
-        "ollama" => LLMProviderType::Ollama,
-        "openai" => LLMProviderType::OpenAI,
-
-        "openai-responses" => LLMProviderType::OpenAIResponses,
-        "openai-responses-ws" => LLMProviderType::OpenAIResponsesWs,
-        "openrouter" => LLMProviderType::OpenRouter,
-        "vertex" => LLMProviderType::Vertex,
-        _ => {
-            return Err(anyhow::anyhow!(
-                "Unknown provider type: {}",
-                provider_config.provider
-            ))
-        }
-    };
+    let provider_type = parse_provider_type(&provider_config.provider)?;
 
     // Extract recording path from model config (allowing runtime override)
     let record_path = record_path_override.or_else(|| {
@@ -330,7 +330,22 @@ pub async fn create_llm_client_from_configs(
             .await
         }
         LLMProviderType::OpenAIResponsesWs => {
-            create_openai_responses_ws_client(model_config, provider_config).await
+            let use_kiro_auth = provider_config
+                .config
+                .get("kiro_auth")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if use_kiro_auth {
+                create_kiro_native_client(
+                    model_config,
+                    provider_config,
+                    None,
+                    None,
+                )
+                .await
+            } else {
+                create_openai_responses_ws_client(model_config, provider_config).await
+            }
         }
         LLMProviderType::Vertex => {
             create_vertex_client(model_config, provider_config, record_path).await
@@ -553,6 +568,22 @@ async fn create_openai_responses_client(
 ) -> Result<Box<dyn LLMProvider>> {
     let config = &provider_config.config;
 
+    // Check if Kiro (Builder ID) auth should be used.
+    let use_kiro_auth = config
+        .get("kiro_auth")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    if use_kiro_auth {
+        return create_kiro_native_client(
+            model_config,
+            provider_config,
+            playback_state,
+            record_path,
+        )
+        .await;
+    }
+
     let api_key = config
         .get("api_key")
         .and_then(|v| v.as_str())
@@ -579,6 +610,45 @@ async fn create_openai_responses_client(
     }
 
     let client = apply_custom_config(client, model_config);
+    Ok(Box::new(client))
+}
+
+async fn create_kiro_native_client(
+    model_config: &ModelConfig,
+    provider_config: &ProviderConfig,
+    _playback_state: Option<PlaybackState>,
+    _record_path: Option<PathBuf>,
+) -> Result<Box<dyn LLMProvider>> {
+    let config = &provider_config.config;
+
+    let auth_state = crate::kiro_auth::load_auth_state_from_config(config)
+        .ok_or_else(|| anyhow::anyhow!(crate::kiro_auth::LOGIN_HINT_MESSAGE))?;
+
+    let provider_id = find_provider_id_for_config(provider_config)
+        .unwrap_or_else(|| crate::kiro_auth::DEFAULT_PROVIDER_ID.to_string());
+
+    let storage: std::sync::Arc<dyn crate::kiro_auth::KiroTokenStorage> = std::sync::Arc::new(
+        crate::kiro_auth::ProvidersJsonTokenStorage::new(provider_id, None),
+    );
+
+    let base_url = config
+        .get("base_url")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string())
+        .unwrap_or_else(|| {
+            crate::kiro_auth::default_base_url_for_region(auth_state.tokens.region.as_deref())
+        });
+
+    let profile_arn = auth_state.tokens.profile_arn.clone();
+    let auth_method = auth_state.tokens.auth_method.clone();
+    let auth_provider = crate::kiro_auth::KiroAuthProvider::new(auth_state, storage);
+    let client = crate::kiro_native::KiroNativeClient::new(
+        model_config.id.clone(),
+        base_url,
+        auth_provider,
+        profile_arn,
+        auth_method,
+    );
     Ok(Box::new(client))
 }
 
@@ -664,7 +734,7 @@ async fn create_openai_responses_ws_client(
         .and_then(|v| v.as_str())
         .ok_or_else(|| {
             anyhow::anyhow!(
-                "openai-responses-ws provider requires either 'api_key' or 'codex_auth: true' in config"
+                "openai-responses-ws provider requires one of: 'api_key' or 'codex_auth: true' in config"
             )
         })?;
 
@@ -708,4 +778,27 @@ async fn create_ollama_client(
     let client = OllamaClient::new(model_config.id.clone(), base_url);
     let client = apply_custom_config(client, model_config);
     Ok(Box::new(client))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_provider_type_accepts_openai_compatible_alias() {
+        let parsed = parse_provider_type("openai-compatible").expect("provider should parse");
+        assert_eq!(parsed, LLMProviderType::OpenAIResponsesWs);
+    }
+
+    #[test]
+    fn parse_provider_type_accepts_kiro_alias() {
+        let parsed = parse_provider_type("kiro").expect("provider should parse");
+        assert_eq!(parsed, LLMProviderType::OpenAIResponsesWs);
+    }
+
+    #[test]
+    fn parse_provider_type_rejects_unknown_provider() {
+        let err = parse_provider_type("totally-unknown").expect_err("provider should fail");
+        assert!(err.to_string().contains("Unknown provider type"));
+    }
 }

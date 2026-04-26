@@ -32,6 +32,9 @@ pub enum Mode {
     /// Show ChatGPT subscription auth status
     CodexStatus,
 
+    /// Log in with Kiro Builder ID (opens browser and prompts for device code)
+    KiroLogin,
+
     /// Run as ACP (Agent Client Protocol) agent
     Acp {
         /// Enable verbose logging
@@ -300,6 +303,17 @@ mod tests {
         match args.mode {
             Some(Mode::Acp { verbose, .. }) => assert!(verbose),
             _ => panic!("Expected acp mode"),
+        }
+    }
+
+    #[test]
+    fn test_kiro_login_mode() {
+        let args =
+            Args::try_parse_from(["test", "kiro-login"]).expect("Failed to parse kiro-login args");
+
+        match args.mode {
+            Some(Mode::KiroLogin) => {}
+            _ => panic!("Expected kiro-login mode"),
         }
     }
 }
