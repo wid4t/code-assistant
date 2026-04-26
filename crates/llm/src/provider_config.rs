@@ -29,10 +29,22 @@ pub struct ModelConfig {
     /// Defaults to false when omitted in models.json.
     #[serde(default)]
     pub use_rtk: bool,
+    /// Whether to send `prompt_cache_key` for OpenAI-compatible requests.
+    /// Defaults to true when omitted in models.json.
+    #[serde(default = "default_true")]
+    pub use_cache_key: bool,
+    /// Whether to send `reasoning_effort` for OpenAI-compatible requests.
+    /// Defaults to true when omitted in models.json.
+    #[serde(default = "default_true")]
+    pub use_reasoning_effort: bool,
     /// Model-specific configuration
     pub config: serde_json::Value,
     /// Maximum context window supported by the model (token count)
     pub context_token_limit: u32,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Configuration for all models (model_display_name -> ModelConfig)

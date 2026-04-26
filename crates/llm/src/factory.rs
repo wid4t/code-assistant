@@ -166,7 +166,7 @@ macro_rules! simple_provider_factory {
 
             let client = <$client_type>::new(api_key, model_config.id.clone(), base_url);
             let client = apply_custom_config(client, model_config);
-            Ok(Box::new(client))
+            Ok(Box::new(client) as Box<dyn LLMProvider>)
         }
     };
 }
@@ -178,8 +178,23 @@ simple_provider_factory!(create_minimax_client, MinimaxClient, "Minimax");
 simple_provider_factory!(create_mistral_client, MistralAiClient, "MistralAI");
 simple_provider_factory!(create_moonshot_client, MoonshotClient, "Moonshot");
 simple_provider_factory!(create_zai_client, ZaiClient, "Z.ai");
-simple_provider_factory!(create_openai_client, OpenAIClient, "OpenAI");
 simple_provider_factory!(create_openrouter_client, OpenRouterClient, "OpenRouter");
+
+async fn create_openai_client(
+    model_config: &ModelConfig,
+    provider_config: &ProviderConfig,
+) -> Result<Box<dyn LLMProvider>> {
+    let api_key = get_api_key(&provider_config.config, "OpenAI")?;
+    let base_url = get_base_url(&provider_config.config, &OpenAIClient::default_base_url());
+
+    let client = OpenAIClient::new(api_key, model_config.id.clone(), base_url)
+        .with_request_options(
+            model_config.use_cache_key,
+            model_config.use_reasoning_effort,
+        );
+    let client = apply_custom_config(client, model_config);
+    Ok(Box::new(client))
+}
 
 // ============================================================================
 // Provider Types and Configuration
@@ -471,7 +486,7 @@ async fn create_ai_core_client(
                 AiCoreAnthropicClient::new(token_manager, api_url)
             };
             let client = apply_custom_config(client, model_config);
-            Ok(Box::new(client))
+            Ok(Box::new(client) as Box<dyn LLMProvider>)
         }
         AiCoreApiType::OpenAI => {
             let client = if let Some(path) = record_path {
@@ -485,7 +500,7 @@ async fn create_ai_core_client(
                 AiCoreOpenAIClient::new(token_manager, api_url, model_config.id.clone())
             };
             let client = apply_custom_config(client, model_config);
-            Ok(Box::new(client))
+            Ok(Box::new(client) as Box<dyn LLMProvider>)
         }
         AiCoreApiType::Vertex => {
             let client = if let Some(path) = record_path {
@@ -499,7 +514,7 @@ async fn create_ai_core_client(
                 AiCoreVertexClient::new(token_manager, api_url, model_config.id.clone())
             };
             let client = apply_custom_config(client, model_config);
-            Ok(Box::new(client))
+            Ok(Box::new(client) as Box<dyn LLMProvider>)
         }
     }
 }

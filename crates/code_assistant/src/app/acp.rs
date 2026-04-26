@@ -16,18 +16,24 @@ pub async fn run(verbose: bool, config: AgentRunConfig) -> Result<()> {
     // Setup logging to file since stdout is used for ACP protocol
     use tracing_subscriber::prelude::*;
 
-    // Use /tmp on Unix-like systems
+    // Use /tmp on Unix-like systems, ProgramData on Windows.
     let log_path = if cfg!(unix) {
-        "/tmp/code-assistant-acp.log"
+        "/tmp/code-assistant-acp.log".to_string()
     } else {
-        // Windows fallback
-        "code-assistant-acp.log"
+        let program_data = std::env::var("ProgramData")
+            .unwrap_or_else(|_| "C:\\ProgramData".to_string());
+        format!("{program_data}\\code-assistant\\code-assistant-acp.log")
     };
+
+    if let Some(parent) = std::path::Path::new(&log_path).parent() {
+        std::fs::create_dir_all(parent)
+            .unwrap_or_else(|_| panic!("Failed to create log directory at {}", parent.display()));
+    }
 
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(log_path)
+        .open(&log_path)
         .unwrap_or_else(|_| panic!("Failed to open log file at {log_path}"));
 
     tracing_subscriber::registry()

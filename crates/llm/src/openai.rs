@@ -310,6 +310,8 @@ pub struct OpenAIClient {
     model_temperatures: HashMap<String, f32>,
     model_top_ps: HashMap<String, f32>,
     model_reasoning_efforts: HashMap<String, String>,
+    use_cache_key: bool,
+    use_reasoning_effort: bool,
     // Customization points
     auth_provider: Box<dyn AuthProvider>,
     request_customizer: Box<dyn RequestCustomizer>,
@@ -333,6 +335,8 @@ impl OpenAIClient {
             model_temperatures,
             model_top_ps,
             model_reasoning_efforts,
+            use_cache_key: true,
+            use_reasoning_effort: true,
             auth_provider: Box::new(ApiKeyAuth::new(api_key)),
             request_customizer: Box::new(DefaultRequestCustomizer),
             custom_config: None,
@@ -356,6 +360,8 @@ impl OpenAIClient {
             model_temperatures,
             model_top_ps,
             model_reasoning_efforts,
+            use_cache_key: true,
+            use_reasoning_effort: true,
             auth_provider,
             request_customizer,
             custom_config: None,
@@ -365,6 +371,12 @@ impl OpenAIClient {
     /// Set custom model configuration to be merged into API requests
     pub fn with_custom_config(mut self, custom_config: serde_json::Value) -> Self {
         self.custom_config = Some(custom_config);
+        self
+    }
+
+    pub fn with_request_options(mut self, use_cache_key: bool, use_reasoning_effort: bool) -> Self {
+        self.use_cache_key = use_cache_key;
+        self.use_reasoning_effort = use_reasoning_effort;
         self
     }
 
@@ -1184,8 +1196,12 @@ impl LLMProvider for OpenAIClient {
             top_p: self.get_top_p(),
             stream: None,
             stream_options: None,
-            prompt_cache_key: Some(request.session_id.clone()),
-            reasoning_effort: self.get_reasoning_effort(),
+            prompt_cache_key: self.use_cache_key.then_some(request.session_id.clone()),
+            reasoning_effort: if self.use_reasoning_effort {
+                self.get_reasoning_effort()
+            } else {
+                None
+            },
             tool_choice: Some(serde_json::json!("auto")),
             tools: request.tools.map(|tools| {
                 tools
